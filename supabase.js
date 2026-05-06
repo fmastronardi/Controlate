@@ -15,11 +15,29 @@ function supaHeaders(extra = {}) {
   return { ...h, ...extra };
 }
 
-async function supaFetch(path, opts = {}) {
+async function supaFetch(path, opts = {}, isRetry = false) {
   const r = await fetch(SUPA_URL + path, { ...opts, headers: { ...supaHeaders(), ...(opts.headers || {}) } });
   if (!r.ok) {
     const e = await r.json().catch(() => ({}));
-    throw new Error(e.message || e.error_description || r.statusText);
+    const msg = e.message || e.error_description || r.statusText || '';
+    // Auto-refresh if JWT expired and we haven't retried yet
+    if (!isRetry && (r.status === 401 || msg.toLowerCase().includes('jwt') || msg.toLowerCase().includes('expired'))) {
+      const stored = getStoredSession();
+      if (stored && stored.refresh_token) {
+        try {
+          await refreshSession(stored.refresh_token);
+          return supaFetch(path, opts, true); // retry once with new token
+        } catch(refreshErr) {
+          // Refresh failed — session expired, redirect to login
+          _supaUser = null;
+          localStorage.removeItem('supa_session');
+          alert('Tu sesión expiró. Por favor iniciá sesión nuevamente.');
+          window.location.reload();
+          return;
+        }
+      }
+    }
+    throw new Error(msg || 'Error en la solicitud');
   }
   return r.status === 204 ? null : r.json();
 }
